@@ -93,7 +93,24 @@ spec:
           lifecycle:
             preStop:
               exec:
-                command: ["/bin/sh","-c","curl -X POST http://localhost:9901/drain_listeners?graceful; sleep $DRAIN_TIME_SECONDS"]
+                command:
+                  - /bin/sh
+                  - -c
+                  - |
+                    drain_status=0
+                    if command -v curl >/dev/null 2>&1; then
+                      curl -fsS --max-time 2 -X POST 'http://localhost:9901/drain_listeners?graceful' || drain_status=$?
+                    else
+                      timeout 2s /bin/bash -ec '
+                        exec 3<>/dev/tcp/127.0.0.1/9901
+                        printf "%s\r\n" "POST /drain_listeners?graceful HTTP/1.1" \
+                          "Host: localhost" "Content-Length: 0" "Connection: close" "" >&3
+                        read -r protocol status _ <&3
+                        [[ "$protocol" == HTTP/1.1 && "$status" == 200 ]]
+                      ' || drain_status=$?
+                    fi
+                    sleep "$DRAIN_TIME_SECONDS"
+                    exit "$drain_status"
           readinessProbe:
             httpGet:
               httpHeaders:
